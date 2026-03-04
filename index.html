@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Center Court</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="app-header">
+      <h1>Center Court</h1>
+      <p id="weekLabel" class="week-label"></p>
+    </header>
+
+    <section id="calendar" class="calendar" aria-live="polite"></section>
+
+    <section id="weatherCard" class="weather-card" aria-live="polite">
+      <h2 class="weather-title">Weather</h2>
+      <p class="weather-line"><span class="meta-label">Now:</span> <span id="weatherNow">Loading...</span></p>
+      <p class="weather-line"><span class="meta-label">Sunrise:</span> <span id="sunriseTime">--:--</span></p>
+      <p class="weather-line"><span class="meta-label">Sunset:</span> <span id="sunsetTime">--:--</span></p>
+    </section>
+  </main>
+
+  <template id="eventTemplate">
+    <article class="event-card">
+      <h3 class="event-title"></h3>
+      <p class="event-meta"><span class="meta-label">Time:</span> <span class="event-time"></span></p>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
