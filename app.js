@@ -1,4 +1,5 @@
 const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const CALENDAR_TIMEZONE = "Europe/Stockholm";
 const weatherCodeMap = {
   0: "Clear sky",
   1: "Mainly clear",
@@ -46,7 +47,10 @@ function addDays(date, days) {
 }
 
 function isoDate(date) {
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatDayDate(date) {
@@ -54,6 +58,22 @@ function formatDayDate(date) {
     month: "short",
     day: "numeric"
   }).format(date);
+}
+
+function isoDateInTimeZone(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const year = parts.find((p) => p.type === "year")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+  if (!year || !month || !day) {
+    return isoDate(date);
+  }
+  return `${year}-${month}-${day}`;
 }
 
 function getIsoWeekNumber(date) {
@@ -65,14 +85,18 @@ function getIsoWeekNumber(date) {
 }
 
 function formatTimeRange(startIso, endIso) {
-  const start = new Date(startIso);
-  const end = new Date(endIso);
+  const start = extractIsoClock(startIso);
+  const end = extractIsoClock(endIso);
+  if (start && end) {
+    return `${start} - ${end}`;
+  }
+
   const fmt = new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false
   });
-  return `${fmt.format(start)} - ${fmt.format(end)}`;
+  return `${fmt.format(new Date(startIso))} - ${fmt.format(new Date(endIso))}`;
 }
 
 function formatClock(isoTime) {
@@ -86,6 +110,17 @@ function formatClock(isoTime) {
   }).format(new Date(isoTime));
 }
 
+function extractIsoClock(isoValue) {
+  if (typeof isoValue !== "string") {
+    return null;
+  }
+  const match = isoValue.match(/T(\d{2}):(\d{2})/);
+  if (!match) {
+    return null;
+  }
+  return `${match[1]}:${match[2]}`;
+}
+
 function renderCalendar(events) {
   const calendar = document.getElementById("calendar");
   const weekLabel = document.getElementById("weekLabel");
@@ -93,6 +128,7 @@ function renderCalendar(events) {
   calendar.innerHTML = "";
 
   const monday = getMonday();
+  const todayKey = isoDateInTimeZone(new Date(), CALENDAR_TIMEZONE);
   weekLabel.textContent = `Week: ${getIsoWeekNumber(monday)} ${monday.getFullYear()}`;
 
   const grouped = {};
@@ -109,6 +145,9 @@ function renderCalendar(events) {
     const key = isoDate(dayDate);
     const column = document.createElement("section");
     column.className = "day-column";
+    if (key === todayKey) {
+      column.classList.add("day-column--today");
+    }
 
     const header = document.createElement("div");
     header.className = "day-header";
@@ -139,6 +178,20 @@ function renderCalendar(events) {
     column.appendChild(eventsWrap);
     calendar.appendChild(column);
   }
+}
+
+function renderClock() {
+  const clockEl = document.getElementById("clockTime");
+  if (!clockEl) {
+    return;
+  }
+  clockEl.textContent = new Intl.DateTimeFormat(undefined, {
+    timeZone: CALENDAR_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(new Date());
 }
 
 function renderWeather(payload) {
@@ -222,5 +275,7 @@ async function loadWeather() {
 
 loadEvents();
 loadWeather();
+renderClock();
 setInterval(loadEvents, 60 * 1000);
 setInterval(loadWeather, 60 * 1000);
+setInterval(renderClock, 1000);

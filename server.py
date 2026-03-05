@@ -10,6 +10,56 @@ MEETING_LINK_FILE = ROOT / "meetinglink.txt"
 WEATHER_LAT = 59.3037
 WEATHER_LON = 18.0937
 WEATHER_TIMEZONE = "Europe/Stockholm"
+CALENDAR_TIMEZONE = "W. Europe Standard Time"
+
+WINDOWS_TZ_RULES = {
+    "W. Europe Standard Time": {"std": 60, "dst": 120, "dst_start_hour": 2, "dst_end_hour": 3},
+    "Romance Standard Time": {"std": 60, "dst": 120, "dst_start_hour": 2, "dst_end_hour": 3},
+    "Central Europe Standard Time": {"std": 60, "dst": 120, "dst_start_hour": 2, "dst_end_hour": 3},
+    "FLE Standard Time": {"std": 120, "dst": 180, "dst_start_hour": 3, "dst_end_hour": 4},
+    "UTC": {"std": 0, "dst": 0, "dst_start_hour": 0, "dst_end_hour": 0},
+}
+
+
+class WindowsDstTz(dt.tzinfo):
+    def __init__(self, name: str, std_minutes: int, dst_minutes: int, dst_start_hour: int, dst_end_hour: int) -> None:
+        self.name = name
+        self.std_offset = dt.timedelta(minutes=std_minutes)
+        self.dst_offset = dt.timedelta(minutes=dst_minutes)
+        self.dst_start_hour = dst_start_hour
+        self.dst_end_hour = dst_end_hour
+
+    @staticmethod
+    def _last_sunday(year: int, month: int) -> dt.date:
+        day = dt.date(year, month, 31)
+        while day.weekday() != 6:
+            day -= dt.timedelta(days=1)
+        return day
+
+    def _is_dst(self, date_time: dt.datetime) -> bool:
+        if self.std_offset == self.dst_offset:
+            return False
+        naive = date_time.replace(tzinfo=None)
+        start_day = self._last_sunday(naive.year, 3)
+        end_day = self._last_sunday(naive.year, 10)
+        dst_start = dt.datetime(naive.year, 3, start_day.day, self.dst_start_hour, 0, 0)
+        dst_end = dt.datetime(naive.year, 10, end_day.day, self.dst_end_hour, 0, 0)
+        return dst_start <= naive < dst_end
+
+    def utcoffset(self, date_time: dt.datetime | None) -> dt.timedelta:
+        if date_time is None:
+            return self.std_offset
+        if self._is_dst(date_time):
+            return self.dst_offset
+        return self.std_offset
+
+    def dst(self, date_time: dt.datetime | None) -> dt.timedelta:
+        if date_time is None or not self._is_dst(date_time):
+            return dt.timedelta(0)
+        return self.dst_offset - self.std_offset
+
+    def tzname(self, date_time: dt.datetime | None) -> str:
+        return self.name
 
 
 def fold_unwrap(text: str) -> list[str]:
@@ -26,14 +76,29 @@ def fold_unwrap(text: str) -> list[str]:
     return out
 
 
-def parse_ics_datetime(value: str) -> dt.datetime | None:
+def resolve_timezone(tzid: str | None) -> dt.tzinfo:
+    if not tzid:
+        return dt.timezone.utc
+    rules = WINDOWS_TZ_RULES.get(tzid)
+    if not rules:
+        return dt.timezone.utc
+    return WindowsDstTz(
+        name=tzid,
+        std_minutes=rules["std"],
+        dst_minutes=rules["dst"],
+        dst_start_hour=rules["dst_start_hour"],
+        dst_end_hour=rules["dst_end_hour"],
+    )
+
+
+def parse_ics_datetime(value: str, tzid: str | None = None) -> dt.datetime | None:
     value = value.strip()
     try:
         if value.endswith("Z"):
             return dt.datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=dt.timezone.utc)
         if "T" in value:
-            return dt.datetime.strptime(value, "%Y%m%dT%H%M%S").replace(tzinfo=dt.timezone.utc)
-        return dt.datetime.strptime(value, "%Y%m%d").replace(tzinfo=dt.timezone.utc)
+            return dt.datetime.strptime(value, "%Y%m%dT%H%M%S").replace(tzinfo=resolve_timezone(tzid))
+        return dt.datetime.strptime(value, "%Y%m%d").replace(tzinfo=resolve_timezone(tzid))
     except ValueError:
         return None
 
@@ -57,15 +122,17 @@ def parse_ics(content: str) -> list[dict]:
 
         key, value = line.split(":", 1)
         key_upper = key.upper()
+        tz_match = re.search(r"TZID=([^;:]+)", key, flags=re.IGNORECASE)
+        tzid = tz_match.group(1).strip() if tz_match else None
 
         if key_upper.startswith("SUMMARY"):
             current["title"] = value.strip()
         elif key_upper.startswith("DTSTART"):
-            parsed = parse_ics_datetime(value)
+            parsed = parse_ics_datetime(value, tzid)
             if parsed:
                 current["start"] = parsed.isoformat()
         elif key_upper.startswith("DTEND"):
-            parsed = parse_ics_datetime(value)
+            parsed = parse_ics_datetime(value, tzid)
             if parsed:
                 current["end"] = parsed.isoformat()
         elif key_upper.startswith("ORGANIZER"):
@@ -76,14 +143,16 @@ def parse_ics(content: str) -> list[dict]:
                 name = value.replace("MAILTO:", "").strip()
                 current["organizer"] = name
 
-    now_utc = dt.datetime.now(dt.timezone.utc)
-    monday_utc = (now_utc - dt.timedelta(days=(now_utc.weekday()))).replace(hour=0, minute=0, second=0, microsecond=0)
-    friday_utc = monday_utc + dt.timedelta(days=5)
+    calendar_tz = resolve_timezone(CALENDAR_TIMEZONE)
+    now_local = dt.datetime.now(calendar_tz)
+    monday_local = (now_local - dt.timedelta(days=now_local.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    friday_local = monday_local + dt.timedelta(days=5)
 
     filtered = []
     for event in events:
         start_dt = dt.datetime.fromisoformat(event["start"])
-        if monday_utc <= start_dt < friday_utc:
+        start_local = start_dt.astimezone(calendar_tz)
+        if monday_local <= start_local < friday_local:
             filtered.append(
                 {
                     "title": event.get("title", ""),

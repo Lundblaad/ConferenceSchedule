@@ -4,6 +4,7 @@
   --bg-card: #1b345c;
   --accent-red: #8c1d2c;
   --accent-red-soft: #b92d42;
+  --accent-today: #ffd95a;
   --text-main: #ecf2ff;
   --text-soft: #b8c4dd;
   --border: #2a4b78;
@@ -33,7 +34,14 @@ body {
   border-radius: 16px;
   padding: 1.2rem 1.4rem;
   margin-bottom: 1rem;
-  text-align: center;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.header-title {
+  min-width: 0;
 }
 
 h1 {
@@ -59,6 +67,38 @@ h1 {
   border-radius: 14px;
   padding: 0.75rem;
   min-height: 280px;
+}
+
+.day-column--today {
+  border-color: rgba(255, 217, 90, 0.92);
+  box-shadow: 0 0 0 2px rgba(255, 217, 90, 0.55), 0 0 28px rgba(255, 217, 90, 0.5), inset 0 0 22px rgba(255, 217, 90, 0.1);
+}
+
+.day-column--today .day-header {
+  border-left-color: var(--accent-today);
+}
+
+.world-clock {
+  text-align: right;
+  min-width: 150px;
+  padding: 0.45rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid rgba(185, 45, 66, 0.45);
+  background: linear-gradient(150deg, rgba(11, 23, 41, 0.88), rgba(140, 29, 44, 0.2));
+}
+
+.clock-title {
+  margin: 0 0 0.2rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #ffcad3;
+}
+
+.clock-line {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-main);
 }
 
 .day-header {
@@ -141,6 +181,16 @@ h1 {
 @media (max-width: 620px) {
   .app {
     padding: 1rem;
+  }
+
+  .app-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .world-clock {
+    text-align: left;
+    min-width: 0;
   }
 
   .calendar {

@@ -9,8 +9,14 @@
 <body>
   <main class="app">
     <header class="app-header">
-      <h1>Center Court</h1>
-      <p id="weekLabel" class="week-label"></p>
+      <div class="header-title">
+        <h1>Center Court</h1>
+        <p id="weekLabel" class="week-label"></p>
+      </div>
+      <aside class="world-clock" aria-live="polite">
+        <p class="clock-title">Clock</p>
+        <p class="clock-line"><span id="clockTime">--:--</span></p>
+      </aside>
     </header>
 
     <section id="calendar" class="calendar" aria-live="polite"></section>
