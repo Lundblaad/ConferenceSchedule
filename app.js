@@ -69,7 +69,8 @@ function formatTimeRange(startIso, endIso) {
   const end = new Date(endIso);
   const fmt = new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
+    hour12: false
   });
   return `${fmt.format(start)} - ${fmt.format(end)}`;
 }
@@ -80,7 +81,8 @@ function formatClock(isoTime) {
   }
   return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
+    hour12: false
   }).format(new Date(isoTime));
 }
 
