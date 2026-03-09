@@ -103,6 +103,29 @@ def parse_ics_datetime(value: str, tzid: str | None = None) -> dt.datetime | Non
         return None
 
 
+def parse_rrule(value: str) -> dict[str, str]:
+    rule = {}
+    for part in value.split(";"):
+        if "=" not in part:
+            continue
+        key, val = part.split("=", 1)
+        rule[key.strip().upper()] = val.strip()
+    return rule
+
+
+def parse_ics_datetime_values(value: str, tzid: str | None = None) -> list[dt.datetime]:
+    parsed_values = []
+    for item in value.split(","):
+        parsed = parse_ics_datetime(item, tzid)
+        if parsed:
+            parsed_values.append(parsed)
+    return parsed_values
+
+
+def utc_stamp(value: dt.datetime) -> int:
+    return int(value.astimezone(dt.timezone.utc).timestamp())
+
+
 def parse_ics(content: str) -> list[dict]:
     lines = fold_unwrap(content)
     events = []
@@ -110,10 +133,10 @@ def parse_ics(content: str) -> list[dict]:
 
     for line in lines:
         if line == "BEGIN:VEVENT":
-            current = {}
+            current = {"exdates": set()}
             continue
         if line == "END:VEVENT":
-            if current and current.get("start") and current.get("end"):
+            if current and current.get("start_dt") and current.get("end_dt"):
                 events.append(current)
             current = None
             continue
@@ -125,16 +148,28 @@ def parse_ics(content: str) -> list[dict]:
         tz_match = re.search(r"TZID=([^;:]+)", key, flags=re.IGNORECASE)
         tzid = tz_match.group(1).strip() if tz_match else None
 
-        if key_upper.startswith("SUMMARY"):
+        if key_upper.startswith("UID"):
+            current["uid"] = value.strip()
+        elif key_upper.startswith("SUMMARY"):
             current["title"] = value.strip()
         elif key_upper.startswith("DTSTART"):
             parsed = parse_ics_datetime(value, tzid)
             if parsed:
-                current["start"] = parsed.isoformat()
+                current["start_dt"] = parsed
+                current["start_tzid"] = tzid
         elif key_upper.startswith("DTEND"):
             parsed = parse_ics_datetime(value, tzid)
             if parsed:
-                current["end"] = parsed.isoformat()
+                current["end_dt"] = parsed
+        elif key_upper.startswith("RECURRENCE-ID"):
+            parsed = parse_ics_datetime(value, tzid)
+            if parsed:
+                current["recurrence_id_dt"] = parsed
+        elif key_upper.startswith("RRULE"):
+            current["rrule"] = value.strip()
+        elif key_upper.startswith("EXDATE"):
+            parsed_exdates = parse_ics_datetime_values(value.strip(), tzid)
+            current["exdates"].update(utc_stamp(item) for item in parsed_exdates)
         elif key_upper.startswith("ORGANIZER"):
             cn_match = re.search(r"CN=([^;:]+)", key, re.IGNORECASE)
             if cn_match:
@@ -148,21 +183,107 @@ def parse_ics(content: str) -> list[dict]:
     monday_local = (now_local - dt.timedelta(days=now_local.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     friday_local = monday_local + dt.timedelta(days=5)
 
+    weekday_tokens = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+    recurrence_override_keys = set()
+    for event in events:
+        if event.get("uid") and event.get("recurrence_id_dt"):
+            recurrence_override_keys.add((event["uid"], utc_stamp(event["recurrence_id_dt"])))
+
+    def to_payload(event: dict, start_dt: dt.datetime, end_dt: dt.datetime) -> dict:
+        return {
+            "title": event.get("title", ""),
+            "organizer": event.get("organizer") or event.get("title", "Unknown"),
+            "start": start_dt.isoformat(),
+            "end": end_dt.isoformat(),
+        }
+
     filtered = []
     for event in events:
-        start_dt = dt.datetime.fromisoformat(event["start"])
+        if event.get("rrule") and not event.get("recurrence_id_dt"):
+            continue
+        start_dt = event["start_dt"]
         start_local = start_dt.astimezone(calendar_tz)
         if monday_local <= start_local < friday_local:
-            filtered.append(
-                {
-                    "title": event.get("title", ""),
-                    "organizer": event.get("organizer") or event.get("title", "Unknown"),
-                    "start": event["start"],
-                    "end": event["end"],
-                }
-            )
+            filtered.append(to_payload(event, start_dt, event["end_dt"]))
 
-    return filtered
+    for event in events:
+        rrule_value = event.get("rrule")
+        if not rrule_value or event.get("recurrence_id_dt"):
+            continue
+
+        rule = parse_rrule(rrule_value)
+        if rule.get("FREQ") != "WEEKLY":
+            continue
+
+        start_dt = event["start_dt"]
+        end_dt = event["end_dt"]
+        duration = end_dt - start_dt
+        if duration <= dt.timedelta(0):
+            continue
+
+        event_tz = start_dt.tzinfo or dt.timezone.utc
+        start_local = start_dt.astimezone(event_tz)
+        base_week = (start_local - dt.timedelta(days=start_local.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        try:
+            interval = int(rule.get("INTERVAL", "1"))
+        except ValueError:
+            interval = 1
+        if interval < 1:
+            interval = 1
+
+        byday_tokens = [token for token in rule.get("BYDAY", "").split(",") if token in weekday_tokens]
+        if not byday_tokens:
+            byday_tokens = [weekday_tokens[start_local.weekday()]]
+
+        until_dt = None
+        if rule.get("UNTIL"):
+            until_dt = parse_ics_datetime(rule["UNTIL"], event.get("start_tzid"))
+
+        for day_offset in range(5):
+            day_local = monday_local + dt.timedelta(days=day_offset)
+            token = weekday_tokens[day_local.weekday()]
+            if token not in byday_tokens:
+                continue
+
+            occurrence_start = day_local.astimezone(event_tz).replace(
+                hour=start_local.hour,
+                minute=start_local.minute,
+                second=start_local.second,
+                microsecond=start_local.microsecond,
+            )
+            occurrence_week = (occurrence_start - dt.timedelta(days=occurrence_start.weekday())).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            weeks_between = (occurrence_week - base_week).days // 7
+
+            if weeks_between < 0 or weeks_between % interval != 0:
+                continue
+            if occurrence_start < start_local:
+                continue
+            if until_dt and occurrence_start.astimezone(until_dt.tzinfo) > until_dt:
+                continue
+
+            occurrence_stamp = utc_stamp(occurrence_start)
+            if occurrence_stamp in event.get("exdates", set()):
+                continue
+            if event.get("uid") and (event["uid"], occurrence_stamp) in recurrence_override_keys:
+                continue
+
+            occurrence_local = occurrence_start.astimezone(calendar_tz)
+            if monday_local <= occurrence_local < friday_local:
+                filtered.append(to_payload(event, occurrence_start, occurrence_start + duration))
+
+    unique = []
+    seen = set()
+    for item in sorted(filtered, key=lambda entry: entry["start"]):
+        dedupe_key = (item["title"], item["start"], item["end"])
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        unique.append(item)
+
+    return unique
 
 
 def fetch_url(url: str) -> tuple[str, str]:
